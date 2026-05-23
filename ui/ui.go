@@ -6,6 +6,7 @@ import (
 	"ddev-clim/config"
 	"ddev-clim/ddev"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -190,9 +191,18 @@ func StartTUI() error {
 		spinner: sp,
 	}
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l.Styles.Title = lipgloss.NewStyle() // Unset default title styling
+	l.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("enter"),
+				key.WithHelp("enter", "toggle"),
+			),
+		}
+	}
 	// We handle title styling manually to avoid styling instructions
 	
-	instr := "\n" + instructionStyle.Render("Choose an instance and press Enter or Space to toggle ON/OFF")
+	instr := "\n" + instructionStyle.Render("Navigate the instances and toggle on and off")
 	l.Title = titleStyle.Render("DDEV CLInstance Manager") + instr
 
 	
