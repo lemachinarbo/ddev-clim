@@ -1,4 +1,4 @@
-# DDEV Instance Manager
+# DDEV CLInstance Manager
 
 I always forgot to start the ddev instance of the projects I'm working on, so "I" 🤖 created this tool.
 What is for? You can toggle on and off all the ddev instances of the projects you are working on and they will start on boot (if you want).
