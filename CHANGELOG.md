@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/lemachinarbo/ddev-clim/compare/v0.3.0...v0.3.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* update systemd path to /usr/bin for AUR and update README ([fe0b979](https://github.com/lemachinarbo/ddev-clim/commit/fe0b9795ac71579e20ef1eaba3ab78a1b26f8d2f))
+* update systemd service to use /usr/bin path for AUR compatibility ([f3ae675](https://github.com/lemachinarbo/ddev-clim/commit/f3ae6751536c57795d6b75436fe3b41ffca1ba18))
+
 ## [0.3.0](https://github.com/lemachinarbo/ddev-clim/compare/v0.2.1...v0.3.0) (2026-05-23)
 
 
