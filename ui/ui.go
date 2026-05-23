@@ -2,10 +2,12 @@ package ui
 
 import (
 	"fmt"
+	"os/user"
 
 	"ddev-clim/config"
 	"ddev-clim/ddev"
 
+	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -54,10 +56,12 @@ type refreshMsg struct {
 }
 
 type model struct {
-	list    list.Model
-	config  *config.Config
-	spinner spinner.Model
-	err     error
+	list           list.Model
+	config         *config.Config
+	spinner        spinner.Model
+	filepicker     filepicker.Model
+	showFilePicker bool
+	err            error
 }
 
 func (m model) Init() tea.Cmd {
@@ -65,10 +69,37 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.showFilePicker {
+		var cmd tea.Cmd
+		m.filepicker, cmd = m.filepicker.Update(msg)
+
+		// Check if a directory was selected
+		if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+			m.config.ScanPath = path
+			m.showFilePicker = false
+			_ = config.SaveConfig(m.config)
+			return m, tea.Batch(m.refreshCmd(), m.spinner.Tick)
+		}
+
+		// Handle quit or back from picker
+		if msg, ok := msg.(tea.KeyMsg); ok {
+			if msg.String() == "esc" || msg.String() == "q" {
+				m.showFilePicker = false
+				return m, nil
+			}
+		}
+
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+		if msg.String() == "p" {
+			m.showFilePicker = true
+			return m, m.filepicker.Init()
 		}
 		if msg.String() == "enter" || msg.String() == " " {
 			idx := m.list.Index()
@@ -154,6 +185,10 @@ func (m model) refreshCmd() tea.Cmd {
 }
 
 func (m model) View() string {
+	if m.showFilePicker {
+		return docStyle.Render("Select a folder to scan for DDEV projects:\n\n" + m.filepicker.View() + "\n\n(esc to cancel)")
+	}
+
 	s := docStyle.Render(m.list.View())
 	if m.err != nil {
 		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("Error: %v", m.err))
@@ -186,9 +221,17 @@ func StartTUI() error {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
+	fp := filepicker.New()
+	fp.DirAllowed = true
+	fp.FileAllowed = false
+	fp.ShowHidden = false
+	usr, _ := user.Current()
+	fp.CurrentDirectory = usr.HomeDir
+
 	m := model{
-		config:  cfg,
-		spinner: sp,
+		config:     cfg,
+		spinner:    sp,
+		filepicker: fp,
 	}
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
 	l.Styles.Title = lipgloss.NewStyle() // Unset default title styling
@@ -197,6 +240,10 @@ func StartTUI() error {
 			key.NewBinding(
 				key.WithKeys("enter"),
 				key.WithHelp("enter", "toggle"),
+			),
+			key.NewBinding(
+				key.WithKeys("p"),
+				key.WithHelp("p", "path"),
 			),
 		}
 	}

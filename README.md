@@ -34,11 +34,12 @@ ddev-clim
 ```
 - `j/k` or `arrows`: Navigate
 - `Enter` or `Space`: Toggle project (Start/Stop)
+- `p`: Open folder picker to change scan directory
 - `/`: Search/Filter projects
 - `q` or `Ctrl+C`: Quit
 
 ### Scan specific folder
-To scan a specific folder (like `~/projects`) and persist this setting:
+You can change the scan path interactively within the TUI by pressing `p`. Alternatively, set it via CLI:
 ```bash
 ddev-clim --path ~/projects
 ```
