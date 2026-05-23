@@ -1,0 +1,91 @@
+# DDEV CLInstance Manager
+
+I always forgot to start the ddev instance of the projects I'm working on, so "I" 🤖 created this tool.
+What is for? You can toggle on and off all the ddev instances of the projects you are working on and they will start on boot (if you want).
+
+I'm the only user so… this was only tested in one linux machine. 
+
+## Features
+
+- **TUI Interface**: List all DDEV projects with status indicators.
+- **Toggle On/Off**: Quickly start or stop projects with `Enter` or `Space`.
+- **Session Memory**: Automatically remembers which projects were running.
+- **Autostart**: Restore your last session with a single command.
+
+## Installation
+
+### From Source
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/ddev-clim.git
+cd ddev-clim
+
+# Build and install
+go install .
+```
+This will install the binary to your `$GOPATH/bin` (usually `~/go/bin`). Ensure this directory is in your `$PATH`.
+
+### Download Binary
+You can also download pre-built binaries from the [Releases](https://github.com/lemachinarbo/ddev-clim/releases) page.
+
+## Usage
+
+### Interactive TUI
+Just run the command to open the manager:
+```bash
+ddev-clim
+```
+- `j/k` or `arrows`: Navigate
+- `Enter` or `Space`: Toggle project (Start/Stop)
+- `p`: Open folder picker to change scan directory
+  - `.`: Toggle hidden files/folders in the picker
+- `/`: Search/Filter projects
+- `q` or `Ctrl+C`: Quit
+
+### Scan specific folder
+You can change the scan path interactively within the TUI by pressing `p`. Alternatively, set it via CLI:
+```bash
+ddev-clim --path ~/projects
+```
+Once set, the TUI will always scan this folder for DDEV instances.
+
+### Autostart
+To restore the projects that were running when you last used the TUI:
+```bash
+ddev-clim autostart
+```
+
+## System Integration (Auto-start on Boot)
+
+### Using Systemd (Recommended for Linux)
+1. Copy the service file to your user systemd directory:
+   ```bash
+   mkdir -p ~/.config/systemd/user
+   cp ddev-clim.service ~/.config/systemd/user/
+   ```
+2. Enable and start the service:
+   ```bash
+   systemctl --user enable ddev-clim.service
+   systemctl --user start ddev-clim.service
+   ```
+
+### Using Hyprland (Omarchy)
+Add this to your `hyprland.conf`:
+```conf
+exec-once = ddev-clim autostart
+```
+
+## Persistence
+The session state is stored in `~/.config/ddev-clim/config.json`.
+
+
+## License
+
+UBC+P.
+
+Use it.
+Break it.
+Change it.
+And if you make money, buy us some pizza.
+
+Deployed by [mutants.txt](mutants.txt)
