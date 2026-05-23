@@ -66,7 +66,7 @@ type model struct {
 }
 
 func (m model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, m.refreshCmd())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -216,21 +216,6 @@ func StartTUI() error {
 		return err
 	}
 
-	var projects []ddev.Project
-	if cfg.ScanPath != "" {
-		projects, err = ddev.ScanForProjects(cfg.ScanPath)
-	} else {
-		projects, err = ddev.GetProjects()
-	}
-	if err != nil {
-		return err
-	}
-
-	items := []list.Item{}
-	for _, p := range projects {
-		items = append(items, item{project: p})
-	}
-
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
@@ -244,11 +229,12 @@ func StartTUI() error {
 	fp.CurrentDirectory = usr.HomeDir
 
 	m := model{
-		config:     cfg,
-		spinner:    sp,
-		filepicker: fp,
+		config:       cfg,
+		spinner:      sp,
+		filepicker:   fp,
+		isRefreshing: true,
 	}
-	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	l.Styles.Title = lipgloss.NewStyle() // Unset default title styling
 	l.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
