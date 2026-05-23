@@ -25,6 +25,8 @@ var (
 	statusStopped = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	statusWorking = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	instructionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	projectTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
+	pathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
 )
 
 type item struct {
@@ -35,14 +37,18 @@ type item struct {
 
 func (i item) Title() string { return i.project.Name }
 func (i item) Description() string {
+	var statusStr string
 	if i.processing {
-		return statusWorking.Render(i.spinner+" processing...") + " - " + i.project.AppRoot
+		statusStr = statusWorking.Render(i.spinner + " processing...")
+	} else {
+		status := i.project.Status
+		if status == "running" || status == "OK" {
+			statusStr = statusRunning.Render("● " + status)
+		} else {
+			statusStr = statusStopped.Render("○ " + status)
+		}
 	}
-	status := i.project.Status
-	if status == "running" || status == "OK" {
-		return statusRunning.Render("● "+status) + " - " + i.project.AppRoot
-	}
-	return statusStopped.Render("○ "+status) + " - " + i.project.AppRoot
+	return statusStr + " " + pathStyle.Render(i.project.AppRoot)
 }
 func (i item) FilterValue() string { return i.project.Name }
 
@@ -234,7 +240,30 @@ func StartTUI() error {
 		filepicker:   fp,
 		isRefreshing: true,
 	}
-	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+
+	d := list.NewDefaultDelegate()
+	fuchsia := lipgloss.Color("205")
+	
+	// Normal state
+	d.Styles.NormalTitle = d.Styles.NormalTitle.
+		Foreground(lipgloss.Color("255")).
+		Bold(true)
+	
+	// Selected state (Fuchsia accent, no background)
+	d.Styles.SelectedTitle = d.Styles.SelectedTitle.
+		Foreground(fuchsia).
+		Background(lipgloss.NoColor{}).
+		Bold(true).
+		BorderLeft(true).
+		BorderForeground(fuchsia)
+	
+	d.Styles.SelectedDesc = d.Styles.SelectedDesc.
+		Foreground(lipgloss.Color("242")). // Keep path dimmed even on selection
+		Background(lipgloss.NoColor{}).
+		BorderLeft(true).
+		BorderForeground(fuchsia)
+
+	l := list.New([]list.Item{}, d, 0, 0)
 	l.Styles.Title = lipgloss.NewStyle() // Unset default title styling
 	l.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
