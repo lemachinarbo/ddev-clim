@@ -1,5 +1,5 @@
 /ddev-clim
-/ddev-clim-*.tar.gz
-/src/
-/pkg/
+**/*.tar.gz
+**/src/
+**/pkg/
 /aur/
