@@ -74,7 +74,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle hidden file toggle
 		if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "." {
 			m.filepicker.ShowHidden = !m.filepicker.ShowHidden
-			return m, nil
+			return m, m.filepicker.Init() // Force refresh
 		}
 
 		var cmd tea.Cmd
