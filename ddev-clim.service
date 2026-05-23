@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/ddev-clim autostart
+ExecStart=/usr/bin/ddev-clim autostart
 RemainAfterExit=yes
 
 [Install]
