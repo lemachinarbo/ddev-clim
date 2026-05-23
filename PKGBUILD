@@ -11,7 +11,7 @@ makedepends=('go')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgname-v$pkgver.tar.gz")
 
 build() {
-  cd "$pkgname-v$pkgver"
+  cd "$srcdir/$pkgname-ddev-clim-v$pkgver"
   export CGO_CPPFLAGS="${CPPFLAGS}"
   export CGO_CFLAGS="${CFLAGS}"
   export CGO_CXXFLAGS="${CXXFLAGS}"
@@ -22,7 +22,7 @@ build() {
 }
 
 package() {
-  cd "$pkgname-v$pkgver"
+  cd "$srcdir/$pkgname-ddev-clim-v$pkgver"
   install -Dm755 "$pkgname" "$pkgdir/usr/bin/$pkgname"
   install -Dm644 ddev-clim.service "$pkgdir/usr/lib/systemd/user/ddev-clim.service"
 }
