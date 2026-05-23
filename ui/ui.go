@@ -61,6 +61,7 @@ type model struct {
 	spinner        spinner.Model
 	filepicker     filepicker.Model
 	showFilePicker bool
+	isRefreshing   bool
 	err            error
 }
 
@@ -70,6 +71,12 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.showFilePicker {
+		// Handle hidden file toggle
+		if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "." {
+			m.filepicker.ShowHidden = !m.filepicker.ShowHidden
+			return m, nil
+		}
+
 		var cmd tea.Cmd
 		m.filepicker, cmd = m.filepicker.Update(msg)
 
@@ -77,6 +84,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
 			m.config.ScanPath = path
 			m.showFilePicker = false
+			m.isRefreshing = true
 			_ = config.SaveConfig(m.config)
 			return m, tea.Batch(m.refreshCmd(), m.spinner.Tick)
 		}
@@ -131,6 +139,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshCmd()
 
 	case refreshMsg:
+		m.isRefreshing = false
 		items := []list.Item{}
 		running := []string{}
 		for _, p := range msg.projects {
@@ -187,7 +196,11 @@ func (m model) refreshCmd() tea.Cmd {
 
 func (m model) View() string {
 	if m.showFilePicker {
-		return docStyle.Render("Select a folder to scan for DDEV projects:\n\n" + m.filepicker.View() + "\n\n(esc to cancel)")
+		return docStyle.Render("Select a folder to scan for DDEV projects:\n\n" + m.filepicker.View() + "\n\n(esc: back • .: toggle hidden)")
+	}
+
+	if m.isRefreshing {
+		return docStyle.Render(fmt.Sprintf("\n\n  %s Scanning for DDEV projects in %s...", m.spinner.View(), m.config.ScanPath))
 	}
 
 	s := docStyle.Render(m.list.View())

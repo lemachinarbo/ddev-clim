@@ -35,6 +35,7 @@ ddev-clim
 - `j/k` or `arrows`: Navigate
 - `Enter` or `Space`: Toggle project (Start/Stop)
 - `p`: Open folder picker to change scan directory
+  - `.`: Toggle hidden files/folders in the picker
 - `/`: Search/Filter projects
 - `q` or `Ctrl+C`: Quit
 
