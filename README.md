@@ -51,9 +51,10 @@ systemctl --user enable --now ddev-clim.service
 ```
 
 ### Using Hyprland (Omarchy)
-Add this to your `hyprland.conf`:
+The recommended way in Omarchy is to add it to your `autostart.conf` using the `uwsm` wrapper:
 ```conf
-exec-once = ddev-clim autostart
+# ~/.config/hypr/autostart.conf
+exec-once = uwsm app -- ddev-clim autostart
 ```
 
 ## Development & Releases
