@@ -8,7 +8,6 @@ import (
 
 type Config struct {
 	RunningProjects []string `json:"running_projects"`
-	ScanPath        string   `json:"scan_path"`
 }
 
 func GetConfigPath() (string, error) {

@@ -30,4 +30,5 @@ Once the GitHub tag is live:
 ## Development Notes
 - TUI uses `charmbracelet/bubbletea`.
 - Session state is stored in `~/.config/ddev-clim/config.json`.
-- The interactive folder picker is accessed with `p` and toggles hidden files with `.`.
+- TUI features a table-like layout aligned with the official `ddev list` output.
+

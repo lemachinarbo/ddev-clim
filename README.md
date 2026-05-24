@@ -33,16 +33,8 @@ ddev-clim
 ```
 - `j/k` or `arrows`: Navigate
 - `Enter` or `Space`: Toggle project (Start/Stop)
-- `p`: Open folder picker to change scan directory
-  - `.`: Toggle hidden files/folders in the picker
 - `/`: Search/Filter projects
 - `q` or `Ctrl+C`: Quit
-
-### Scan specific folder
-You can change the scan path interactively within the TUI by pressing `p`. Alternatively, set it via CLI:
-```bash
-ddev-clim --path ~/projects
-```
 
 ### Autostart
 To restore the projects that were running when you last used the TUI:
