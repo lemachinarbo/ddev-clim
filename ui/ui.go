@@ -19,16 +19,16 @@ import (
 var (
 	docStyle = lipgloss.NewStyle().Margin(1, 2)
 	titleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("62")).
+			Foreground(lipgloss.AdaptiveColor{Light: "15", Dark: "15"}). // White text on header
+			Background(lipgloss.Color("4")).                            // Standard Blue
 			Padding(0, 1)
-	statusRunning    = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	statusStopped    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	statusWorking    = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	instructionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
-	pathStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-	headerStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Underline(true)
-	fuchsia          = lipgloss.Color("205")
+	statusRunning    = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // Standard Green
+	statusStopped    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // Bright Black (Gray)
+	statusWorking    = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // Standard Magenta
+	instructionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	pathStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	headerStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"}).Bold(true).Underline(true)
+	fuchsia          = lipgloss.Color("5") // Standard Magenta
 )
 
 type item struct {
@@ -66,7 +66,8 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		name = runewidth.Truncate(name, nameWidth-5, "...")
 	}
 	
-	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
+	// Default foreground for normal titles (adapts to light/dark automatically)
+	nameStyle := lipgloss.NewStyle().Bold(true)
 	if index == m.Index() {
 		nameStyle = nameStyle.Foreground(fuchsia)
 	}
