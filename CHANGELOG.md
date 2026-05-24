@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/lemachinarbo/ddev-clim/compare/v0.3.1...v0.4.0) (2026-05-24)
+
+
+### Features
+
+* refactor TUI to table layout and implement Zero Config mode ([0b610bd](https://github.com/lemachinarbo/ddev-clim/commit/0b610bde8b0239adf5dc2dc1c9d2a85fe8e12b29))
+
 ## [0.3.1](https://github.com/lemachinarbo/ddev-clim/compare/v0.3.0...v0.3.1) (2026-05-23)
 
 
