@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/lemachinarbo/ddev-clim/compare/v0.4.0...v0.4.1) (2026-05-24)
+
+
+### Bug Fixes
+
+* implement theme-aware ANSI colors for TUI ([47d0761](https://github.com/lemachinarbo/ddev-clim/commit/47d07610f5be20db970b8718687f2238991e340d))
+
 ## [0.4.0](https://github.com/lemachinarbo/ddev-clim/compare/v0.3.1...v0.4.0) (2026-05-24)
 
 
