@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"ddev-clim/config"
 	"ddev-clim/ddev"
@@ -18,9 +19,18 @@ var autostartCmd = &cobra.Command{
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
-		projects, err := ddev.GetProjects()
-		if err != nil {
-			return fmt.Errorf("failed to get projects: %w", err)
+		var projects []ddev.Project
+		var errProjects error
+		for i := 0; i < 5; i++ {
+			projects, errProjects = ddev.GetProjects()
+			if errProjects == nil {
+				break
+			}
+			fmt.Printf("Attempt %d: failed to get projects, retrying in 2s... (%v)\n", i+1, errProjects)
+			time.Sleep(2 * time.Second)
+		}
+		if errProjects != nil {
+			return fmt.Errorf("failed to get projects after retries: %w", errProjects)
 		}
 
 		projectMap := make(map[string]ddev.Project)

@@ -10,6 +10,25 @@ type Config struct {
 	RunningProjects []string `json:"running_projects"`
 }
 
+func (c *Config) AddProject(name string) {
+	for _, p := range c.RunningProjects {
+		if p == name {
+			return
+		}
+	}
+	c.RunningProjects = append(c.RunningProjects, name)
+}
+
+func (c *Config) RemoveProject(name string) {
+	var newProjects []string
+	for _, p := range c.RunningProjects {
+		if p != name {
+			newProjects = append(newProjects, p)
+		}
+	}
+	c.RunningProjects = newProjects
+}
+
 func GetConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

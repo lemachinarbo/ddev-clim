@@ -149,6 +149,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				i.spinner = m.spinner.View()
 				m.list.SetItem(idx, i)
 
+				if i.project.Status == "running" || i.project.Status == "OK" {
+					m.config.RemoveProject(i.project.Name)
+				} else {
+					m.config.AddProject(i.project.Name)
+				}
+				_ = config.SaveConfig(m.config)
+
 				return m, func() tea.Msg {
 					var err error
 					if i.project.Status == "running" || i.project.Status == "OK" {
@@ -169,16 +176,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		m.isRefreshing = false
 		items := []list.Item{}
-		running := []string{}
 		for _, p := range msg.projects {
 			items = append(items, item{project: p})
-			if p.Status == "running" || p.Status == "OK" {
-				running = append(running, p.Name)
-			}
 		}
 		m.list.SetItems(items)
-		m.config.RunningProjects = running
-		_ = config.SaveConfig(m.config)
 		return m, nil
 
 	case spinner.TickMsg:
