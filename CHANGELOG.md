@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/lemachinarbo/ddev-clim/compare/v0.4.1...v0.4.2) (2026-05-27)
+
+
+### Bug Fixes
+
+* prevent memory wipe in TUI and add retry logic to autostart ([ecf7934](https://github.com/lemachinarbo/ddev-clim/commit/ecf7934422e2acda513acdf5259aca80c6d2f639))
+
 ## [0.4.1](https://github.com/lemachinarbo/ddev-clim/compare/v0.4.0...v0.4.1) (2026-05-24)
 
 
