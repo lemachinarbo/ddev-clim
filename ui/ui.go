@@ -122,8 +122,9 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 }
 
 type statusMsg struct {
-	index int
-	err   error
+	index      int
+	isStopping bool
+	err        error
 }
 
 type refreshMsg struct {
@@ -164,21 +165,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					i.spinner = m.spinner.View()
 					m.list.SetItem(idx, i)
 
-					if i.project.Status == "running" || i.project.Status == "OK" || i.project.Status == "unhealthy" {
-						m.config.RemoveProject(i.project.Name)
-					} else {
-						m.config.AddProject(i.project.Name)
-					}
-					_ = config.SaveConfig(m.config)
+					isStopping := i.project.Status == "running" || i.project.Status == "OK" || i.project.Status == "unhealthy"
 
 					return m, func() tea.Msg {
 						var err error
-						if i.project.Status == "running" || i.project.Status == "OK" || i.project.Status == "unhealthy" {
+						if isStopping {
 							err = ddev.StopProject(i.project.AppRoot)
 						} else {
 							err = ddev.StartProject(i.project.AppRoot)
 						}
-						return statusMsg{index: idx, err: err}
+						return statusMsg{index: idx, isStopping: isStopping, err: err}
 					}
 				}
 			}
@@ -201,6 +197,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.lastErrors[name] = msg.err.Error()
 					} else {
 						delete(m.lastErrors, name)
+						// Update config only on successful start/stop
+						if msg.isStopping {
+							m.config.RemoveProject(name)
+						} else {
+							m.config.AddProject(name)
+						}
+						_ = config.SaveConfig(m.config)
 					}
 				}
 			}
@@ -210,6 +213,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.err = nil
 				m.lastErrors = make(map[string]string)
+				// Clear all running projects from config on global poweroff
+				m.config.RunningProjects = []string{}
+				_ = config.SaveConfig(m.config)
 			}
 		}
 		m.refreshMsg = "Loading DDEV projects..."
