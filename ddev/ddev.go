@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 type Project struct {
@@ -43,6 +44,9 @@ type DescribeOutput struct {
 type CommandStream struct {
 	Reader *bufio.Reader
 	Cmd    *exec.Cmd
+	Mu     sync.Mutex
+	Err    error
+	Done   bool
 }
 
 func GetProjects() ([]Project, error) {
@@ -118,10 +122,21 @@ func StartCommandStream(appRoot string, action string) (*CommandStream, error) {
 		return nil, err
 	}
 
-	return &CommandStream{
+	stream := &CommandStream{
 		Reader: bufio.NewReader(stdout),
 		Cmd:    cmd,
-	}, nil
+	}
+
+	go func() {
+		waitErr := cmd.Wait()
+		stream.Mu.Lock()
+		stream.Err = waitErr
+		stream.Done = true
+		stream.Mu.Unlock()
+		_ = stdout.Close()
+	}()
+
+	return stream, nil
 }
 
 func Poweroff() error {

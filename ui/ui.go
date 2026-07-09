@@ -362,11 +362,22 @@ func readStreamLineCmd(name string, isStopping bool, stream *ddev.CommandStream)
 	return func() tea.Msg {
 		line, err := stream.Reader.ReadString('\n')
 		if err != nil {
-			waitErr := stream.Cmd.Wait()
+			stream.Mu.Lock()
+			done := stream.Done
+			waitErr := stream.Err
+			stream.Mu.Unlock()
+			
+			if done {
+				return streamFinishedMsg{
+					projectName: name,
+					isStopping:  isStopping,
+					err:         waitErr,
+				}
+			}
 			return streamFinishedMsg{
 				projectName: name,
 				isStopping:  isStopping,
-				err:         waitErr,
+				err:         err,
 			}
 		}
 		return streamLineMsg{
