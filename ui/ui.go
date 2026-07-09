@@ -133,13 +133,15 @@ type refreshMsg struct {
 }
 
 type model struct {
-	list         list.Model
-	config       *config.Config
-	spinner      spinner.Model
-	isRefreshing bool
-	refreshMsg   string
-	err          error
-	lastErrors   map[string]string
+	list           list.Model
+	config         *config.Config
+	spinner        spinner.Model
+	isRefreshing   bool
+	refreshMsg     string
+	err            error
+	lastErrors     map[string]string
+	terminalWidth  int
+	terminalHeight int
 }
 
 func (m model) Init() tea.Cmd {
@@ -232,6 +234,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items = append(items, item{project: p})
 		}
 		m.list.SetItems(items)
+		m = m.updateListSize()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -250,17 +253,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.WindowSizeMsg:
-		h, v := docStyle.GetFrameSize()
-		listHeight := msg.Height - v - 6
-		if listHeight < 5 {
-			listHeight = 5
-		}
-		m.list.SetSize(msg.Width-h, listHeight)
+		m.terminalWidth = msg.Width
+		m.terminalHeight = msg.Height
+		m = m.updateListSize()
 	}
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+func (m model) updateListSize() model {
+	if m.terminalHeight == 0 {
+		return m
+	}
+	h, v := docStyle.GetFrameSize()
+	
+	// 7 lines for headers, title, help and spacing
+	desiredHeight := len(m.list.Items()) + 7
+	
+	maxHeight := m.terminalHeight - v - 6
+	if desiredHeight > maxHeight {
+		desiredHeight = maxHeight
+	}
+	if desiredHeight < 5 {
+		desiredHeight = 5
+	}
+	
+	m.list.SetSize(m.terminalWidth-h, desiredHeight)
+	return m
 }
 
 func (m model) refreshCmd() tea.Cmd {
