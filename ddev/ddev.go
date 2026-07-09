@@ -128,9 +128,13 @@ func StartCommandStream(appRoot string, action string) (*CommandStream, error) {
 	}
 
 	go func() {
-		waitErr := cmd.Wait()
+		state, waitErr := cmd.Process.Wait()
 		stream.Mu.Lock()
-		stream.Err = waitErr
+		if waitErr != nil {
+			stream.Err = waitErr
+		} else if !state.Success() {
+			stream.Err = fmt.Errorf("exit status %d", state.ExitCode())
+		}
 		stream.Done = true
 		stream.Mu.Unlock()
 		_ = stdout.Close()
