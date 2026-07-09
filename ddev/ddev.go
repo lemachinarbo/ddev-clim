@@ -51,3 +51,12 @@ func StopProject(appRoot string) error {
 	}
 	return nil
 }
+
+func Poweroff() error {
+	cmd := exec.Command("ddev", "poweroff")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to power off ddev: %w", err)
+	}
+	return nil
+}
+

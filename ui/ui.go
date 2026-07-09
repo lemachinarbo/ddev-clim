@@ -25,6 +25,7 @@ var (
 	statusRunning    = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // Standard Green
 	statusStopped    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // Bright Black (Gray)
 	statusWorking    = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // Standard Magenta
+	statusUnhealthy  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")) // Standard Red
 	instructionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
 	pathStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	headerStyle      = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"}).Bold(true).Underline(true)
@@ -82,6 +83,8 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		statusStr = statusWorking.Render(i.spinner + " starting...")
 	} else if status == "running" || status == "OK" {
 		statusStr = statusRunning.Render(status)
+	} else if status == "unhealthy" {
+		statusStr = statusUnhealthy.Render(status)
 	} else {
 		statusStr = statusStopped.Render(status)
 	}
@@ -124,6 +127,7 @@ type model struct {
 	config       *config.Config
 	spinner      spinner.Model
 	isRefreshing bool
+	refreshMsg   string
 	err          error
 }
 
@@ -137,40 +141,53 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
-		if msg.String() == "enter" || msg.String() == " " {
-			idx := m.list.Index()
-			items := m.list.Items()
-			if idx < 0 || idx >= len(items) {
-				return m, nil
-			}
-			i, ok := items[idx].(item)
-			if ok && !i.processing {
-				i.processing = true
-				i.spinner = m.spinner.View()
-				m.list.SetItem(idx, i)
-
-				if i.project.Status == "running" || i.project.Status == "OK" {
-					m.config.RemoveProject(i.project.Name)
-				} else {
-					m.config.AddProject(i.project.Name)
+		if m.list.FilterState() != list.Filtering {
+			if msg.String() == "enter" || msg.String() == " " {
+				idx := m.list.Index()
+				items := m.list.Items()
+				if idx < 0 || idx >= len(items) {
+					return m, nil
 				}
-				_ = config.SaveConfig(m.config)
+				i, ok := items[idx].(item)
+				if ok && !i.processing {
+					i.processing = true
+					i.spinner = m.spinner.View()
+					m.list.SetItem(idx, i)
 
-				return m, func() tea.Msg {
-					var err error
-					if i.project.Status == "running" || i.project.Status == "OK" {
-						err = ddev.StopProject(i.project.AppRoot)
+					if i.project.Status == "running" || i.project.Status == "OK" || i.project.Status == "unhealthy" {
+						m.config.RemoveProject(i.project.Name)
 					} else {
-						err = ddev.StartProject(i.project.AppRoot)
+						m.config.AddProject(i.project.Name)
 					}
-					return statusMsg{index: idx, err: err}
+					_ = config.SaveConfig(m.config)
+
+					return m, func() tea.Msg {
+						var err error
+						if i.project.Status == "running" || i.project.Status == "OK" || i.project.Status == "unhealthy" {
+							err = ddev.StopProject(i.project.AppRoot)
+						} else {
+							err = ddev.StartProject(i.project.AppRoot)
+						}
+						return statusMsg{index: idx, err: err}
+					}
+				}
+			}
+			if msg.String() == "p" {
+				m.isRefreshing = true
+				m.refreshMsg = "Powering off DDEV..."
+				return m, func() tea.Msg {
+					err := ddev.Poweroff()
+					return statusMsg{index: -1, err: err}
 				}
 			}
 		}
 	case statusMsg:
 		if msg.err != nil {
 			m.err = msg.err
+		} else {
+			m.err = nil
 		}
+		m.refreshMsg = "Loading DDEV projects..."
 		return m, m.refreshCmd()
 
 	case refreshMsg:
@@ -219,10 +236,31 @@ func (m model) refreshCmd() tea.Cmd {
 
 func (m model) View() string {
 	if m.isRefreshing {
-		return docStyle.Render(fmt.Sprintf("\n\n  %s Loading DDEV projects...", m.spinner.View()))
+		msg := "Loading DDEV projects..."
+		if m.refreshMsg != "" {
+			msg = m.refreshMsg
+		}
+		return docStyle.Render(fmt.Sprintf("\n\n  %s %s", m.spinner.View(), msg))
 	}
 
 	s := docStyle.Render(m.list.View())
+	
+	// Check for unhealthy instances
+	hasUnhealthy := false
+	for _, listItem := range m.list.Items() {
+		if i, ok := listItem.(item); ok && i.project.Status == "unhealthy" {
+			hasUnhealthy = true
+			break
+		}
+	}
+	
+	if hasUnhealthy {
+		warningMsg := "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render(
+			"⚠️ Unhealthy instance(s) detected! Try toggling to stop/restart them, or press 'p' to poweroff DDEV.",
+		)
+		s += warningMsg
+	}
+
 	if m.err != nil {
 		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("Error: %v", m.err))
 	}
@@ -244,6 +282,7 @@ func StartTUI() error {
 		config:       cfg,
 		spinner:      sp,
 		isRefreshing: true,
+		refreshMsg:   "Loading DDEV projects...",
 	}
 
 	d := itemDelegate{spinner: sp}
@@ -253,13 +292,17 @@ func StartTUI() error {
 	l.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
 			key.NewBinding(
-				key.WithKeys("enter"),
-				key.WithHelp("enter", "toggle"),
+				key.WithKeys("enter", " "),
+				key.WithHelp("enter/space", "toggle"),
+			),
+			key.NewBinding(
+				key.WithKeys("p"),
+				key.WithHelp("p", "poweroff"),
 			),
 		}
 	}
 	
-	instr := "\n" + instructionStyle.Render("Navigate the instances and toggle on and off")
+	instr := "\n" + instructionStyle.Render("Navigate the instances, toggle with enter/space, or poweroff with p")
 	
 	// Pre-header padding
 	nameWidth := 30
