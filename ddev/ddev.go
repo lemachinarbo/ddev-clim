@@ -1,9 +1,9 @@
 package ddev
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -42,7 +42,7 @@ type DescribeOutput struct {
 }
 
 type CommandStream struct {
-	Reader *bufio.Reader
+	Reader io.Reader
 	Cmd    *exec.Cmd
 	Mu     sync.Mutex
 	Err    error
@@ -123,7 +123,7 @@ func StartCommandStream(appRoot string, action string) (*CommandStream, error) {
 	}
 
 	stream := &CommandStream{
-		Reader: bufio.NewReader(stdout),
+		Reader: stdout,
 		Cmd:    cmd,
 	}
 

@@ -360,7 +360,8 @@ func (m model) describeCmd(name string, appRoot string) tea.Cmd {
 
 func readStreamLineCmd(name string, isStopping bool, stream *ddev.CommandStream) tea.Cmd {
 	return func() tea.Msg {
-		line, err := stream.Reader.ReadString('\n')
+		buf := make([]byte, 1024)
+		n, err := stream.Reader.Read(buf)
 		if err != nil {
 			stream.Mu.Lock()
 			done := stream.Done
@@ -380,10 +381,25 @@ func readStreamLineCmd(name string, isStopping bool, stream *ddev.CommandStream)
 				err:         err,
 			}
 		}
+		
+		chunk := string(buf[:n])
+		parts := strings.FieldsFunc(chunk, func(r rune) bool {
+			return r == '\n' || r == '\r'
+		})
+		
+		var line string
+		if len(parts) > 0 {
+			line = strings.TrimSpace(parts[len(parts)-1])
+		}
+		
+		if line == "" {
+			line = strings.TrimSpace(chunk)
+		}
+		
 		return streamLineMsg{
 			projectName: name,
 			isStopping:  isStopping,
-			line:        strings.TrimSpace(line),
+			line:        line,
 			stream:      stream,
 		}
 	}
