@@ -36,6 +36,7 @@ type item struct {
 	processing bool
 	spinner    string // Current spinner frame
 	lastError  string
+	latestLog  string // Live stream output
 }
 
 func (i item) Title() string       { return i.project.Name }
@@ -84,6 +85,13 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		if status == "running" || status == "OK" || status == "unhealthy" {
 			action = "stopping..."
 		}
+		if i.latestLog != "" {
+			action = i.latestLog
+		}
+		// Truncate action if it's too long for the status column
+		if runewidth.StringWidth(action) > statusWidth-4 {
+			action = runewidth.Truncate(action, statusWidth-7, "...")
+		}
 		statusStr = statusWorking.Render(i.spinner + " " + action)
 	} else if i.lastError != "" {
 		statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("failed")
@@ -98,7 +106,12 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	// Manual padding for status
 	rawStatus := status
 	if i.processing {
-		if status == "running" || status == "OK" || status == "unhealthy" {
+		if i.latestLog != "" {
+			rawStatus = i.latestLog
+			if runewidth.StringWidth(rawStatus) > statusWidth-4 {
+				rawStatus = runewidth.Truncate(rawStatus, statusWidth-7, "...")
+			}
+		} else if status == "running" || status == "OK" || status == "unhealthy" {
 			rawStatus = "stopping..."
 		} else {
 			rawStatus = "starting..."
@@ -126,9 +139,8 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 }
 
 type statusMsg struct {
-	index      int
-	isStopping bool
-	err        error
+	index int
+	err   error
 }
 
 type refreshMsg struct {
@@ -136,17 +148,39 @@ type refreshMsg struct {
 	err      error
 }
 
+type describeMsg struct {
+	projectName string
+	raw         ddev.DescribeRaw
+	err         error
+}
+
+type streamLineMsg struct {
+	projectName string
+	isStopping  bool
+	line        string
+	stream      *ddev.CommandStream
+}
+
+type streamFinishedMsg struct {
+	projectName string
+	isStopping  bool
+	err         error
+}
+
 type model struct {
-	list           list.Model
-	config         *config.Config
-	spinner        spinner.Model
-	isRefreshing   bool
-	refreshMsg     string
-	err            error
-	lastErrors     map[string]string
+	list               list.Model
+	config             *config.Config
+	spinner            spinner.Model
+	isRefreshing       bool
+	refreshMsg         string
+	err                error
+	lastErrors         map[string]string
 	terminalWidth      int
 	terminalHeight     int
 	showPoweroffPrompt bool
+	descriptions       map[string]ddev.DescribeRaw
+	latestLogs         map[string]string
+	accumulatedLogs    map[string][]string
 }
 
 func (m model) Init() tea.Cmd {
@@ -188,19 +222,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if ok && !i.processing {
 					i.processing = true
 					i.spinner = m.spinner.View()
+					i.latestLog = "starting..."
 					m.list.SetItem(idx, i)
 
 					isStopping := i.project.Status == "running" || i.project.Status == "OK" || i.project.Status == "unhealthy"
-
-					return m, func() tea.Msg {
-						var err error
-						if isStopping {
-							err = ddev.StopProject(i.project.AppRoot)
-						} else {
-							err = ddev.StartProject(i.project.AppRoot)
-						}
-						return statusMsg{index: idx, isStopping: isStopping, err: err}
+					action := "start"
+					if isStopping {
+						action = "stop"
+						i.latestLog = "stopping..."
+						m.list.SetItem(idx, i)
 					}
+
+					stream, err := ddev.StartCommandStream(i.project.AppRoot, action)
+					if err != nil {
+						i.processing = false
+						i.lastError = err.Error()
+						m.list.SetItem(idx, i)
+						return m, nil
+					}
+
+					m.latestLogs[i.project.Name] = i.latestLog
+					m.accumulatedLogs[i.project.Name] = []string{i.latestLog}
+
+					return m, readStreamLineCmd(i.project.Name, isStopping, stream)
 				}
 			}
 			if msg.String() == "p" {
@@ -213,37 +257,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case statusMsg:
-		if msg.index >= 0 {
-			items := m.list.Items()
-			if msg.index < len(items) {
-				if i, ok := items[msg.index].(item); ok {
-					name := i.project.Name
-					if msg.err != nil {
-						m.lastErrors[name] = msg.err.Error()
-						// Recommend poweroff if a project action fails
-						m.showPoweroffPrompt = true
-					} else {
-						delete(m.lastErrors, name)
-						// Update config only on successful start/stop
-						if msg.isStopping {
-							m.config.RemoveProject(name)
-						} else {
-							m.config.AddProject(name)
-						}
-						_ = config.SaveConfig(m.config)
-					}
-				}
-			}
+		if msg.err != nil {
+			m.err = msg.err
 		} else {
-			if msg.err != nil {
-				m.err = msg.err
-			} else {
-				m.err = nil
-				m.lastErrors = make(map[string]string)
-				// Clear all running projects from config on global poweroff
-				m.config.RunningProjects = []string{}
-				_ = config.SaveConfig(m.config)
-			}
+			m.err = nil
+			m.lastErrors = make(map[string]string)
+			// Clear all running projects from config on global poweroff
+			m.config.RunningProjects = []string{}
+			_ = config.SaveConfig(m.config)
 		}
 		m.refreshMsg = "Loading DDEV projects..."
 		return m, m.refreshCmd()
@@ -261,6 +282,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.list.SetItems(items)
 		m = m.updateListSize()
+		
+		// Query describe for currently selected item after refresh!
+		idx := m.list.Index()
+		if idx >= 0 && idx < len(items) {
+			if i, ok := items[idx].(item); ok {
+				return m, m.describeCmd(i.project.Name, i.project.AppRoot)
+			}
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -285,7 +314,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
+	oldIndex := m.list.Index()
 	m.list, cmd = m.list.Update(msg)
+	
+	newIndex := m.list.Index()
+	if oldIndex != newIndex && newIndex >= 0 {
+		items := m.list.Items()
+		if newIndex < len(items) {
+			if i, ok := items[newIndex].(item); ok {
+				describeCmd := m.describeCmd(i.project.Name, i.project.AppRoot)
+				return m, tea.Batch(cmd, describeCmd)
+			}
+		}
+	}
 	return m, cmd
 }
 
@@ -298,7 +339,7 @@ func (m model) updateListSize() model {
 	// 7 lines for headers, title, help and spacing
 	desiredHeight := len(m.list.Items()) + 7
 	
-	maxHeight := m.terminalHeight - v - 6
+	maxHeight := m.terminalHeight - v - 7
 	if desiredHeight > maxHeight {
 		desiredHeight = maxHeight
 	}
@@ -308,6 +349,33 @@ func (m model) updateListSize() model {
 	
 	m.list.SetSize(m.terminalWidth-h, desiredHeight)
 	return m
+}
+
+func (m model) describeCmd(name string, appRoot string) tea.Cmd {
+	return func() tea.Msg {
+		raw, err := ddev.DescribeProject(appRoot)
+		return describeMsg{projectName: name, raw: raw, err: err}
+	}
+}
+
+func readStreamLineCmd(name string, isStopping bool, stream *ddev.CommandStream) tea.Cmd {
+	return func() tea.Msg {
+		line, err := stream.Reader.ReadString('\n')
+		if err != nil {
+			waitErr := stream.Cmd.Wait()
+			return streamFinishedMsg{
+				projectName: name,
+				isStopping:  isStopping,
+				err:         waitErr,
+			}
+		}
+		return streamLineMsg{
+			projectName: name,
+			isStopping:  isStopping,
+			line:        strings.TrimSpace(line),
+			stream:      stream,
+		}
+	}
 }
 
 func (m model) refreshCmd() tea.Cmd {
@@ -347,15 +415,82 @@ func (m model) View() string {
 				borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 				boldLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
 				
-				details = "\n" + borderStyle.Render("── SELECTED PROJECT DETAILS ──────────────────────────────────────────") + "\n"
-				details += fmt.Sprintf("%s %-12s %s %-10s %s %s\n", 
-					boldLabel.Render("Name:"), p.Name,
-					boldLabel.Render("Type:"), p.Type,
+				details = "\n" + borderStyle.Render("── PROJECT STATUS CENTER ─────────────────────────────────────────────") + "\n"
+				
+				desc, hasDesc := m.descriptions[p.Name]
+				if hasDesc && p.Status != "stopped" {
+					typeStr := p.Type
+					if desc.WebserverType != "" {
+						typeStr = fmt.Sprintf("%s (%s)", p.Type, desc.WebserverType)
+					}
+					
+					details += fmt.Sprintf("%s %-12s %s %-14s %s %-8s %s %s\n", 
+						boldLabel.Render("Name:"), p.Name,
+						boldLabel.Render("Type:"), typeStr,
+						boldLabel.Render("PHP:"), desc.PhpVersion,
+						boldLabel.Render("DB:"), fmt.Sprintf("%s:%s", desc.DatabaseType, desc.DatabaseVersion),
+					)
+					
+					statusOKStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
+					statusWarnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
+					statusErrorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+					statusOffStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+					
+					formatServiceStatus := func(svcName, status string) string {
+						var styled string
+						if status == "running" || status == "OK" {
+							styled = statusOKStyle.Render(status)
+						} else if status == "unhealthy" {
+							styled = statusErrorStyle.Render(status)
+						} else if status == "starting" {
+							styled = statusWarnStyle.Render(status)
+						} else {
+							styled = statusOffStyle.Render(status)
+						}
+						return fmt.Sprintf("%s: %s", svcName, styled)
+					}
+					
+					webStatus := "stopped"
+					if web, ok := desc.Services["web"]; ok {
+						webStatus = web.Status
+					}
+					dbStatus := "stopped"
+					if db, ok := desc.Services["db"]; ok {
+						dbStatus = db.Status
+					}
+					
+					containerStatuses := []string{
+						formatServiceStatus("web", webStatus),
+						formatServiceStatus("db", dbStatus),
+					}
+					
+					for name, svc := range desc.Services {
+						if name != "web" && name != "db" && (svc.Status == "running" || svc.Status == "starting" || svc.Status == "unhealthy") {
+							containerStatuses = append(containerStatuses, formatServiceStatus(name, svc.Status))
+						}
+					}
+					
+					if desc.MutagenEnabled {
+						containerStatuses = append(containerStatuses, "mutagen: "+statusOKStyle.Render("enabled"))
+					}
+					
+					details += fmt.Sprintf("%s  %s\n", boldLabel.Render("Containers:"), strings.Join(containerStatuses, "   "))
+				} else {
+					details += fmt.Sprintf("%s %-12s %s %-14s %s %s\n", 
+						boldLabel.Render("Name:"), p.Name,
+						boldLabel.Render("Type:"), p.Type,
+						boldLabel.Render("Path:"), p.AppRoot,
+					)
+				}
+				
+				details += fmt.Sprintf("%s  %-40s %s %s\n", 
+					boldLabel.Render("URL:"), p.PrimaryURL,
 					boldLabel.Render("Path:"), p.AppRoot,
 				)
 				
-				// Show errors or status info
 				lastError := m.lastErrors[p.Name]
+				latestLog := m.latestLogs[p.Name]
+				
 				if lastError != "" {
 					errLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("❌ Error:")
 					formattedErr := formatError(lastError, 3)
@@ -364,6 +499,9 @@ func (m model) View() string {
 					for _, line := range errLines[1:] {
 						details += fmt.Sprintf("         %s\n", line)
 					}
+				} else if latestLog != "" {
+					progressLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true).Render("⏳ Progress:")
+					details += fmt.Sprintf("%s %s\n", progressLabel, latestLog)
 				} else if p.Status == "unhealthy" {
 					tipLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("⚠️ Unhealthy:")
 					details += fmt.Sprintf("%s Project is unhealthy. Try toggling it to stop/restart, or press 'p' to poweroff DDEV globally.\n", tipLabel)
@@ -433,11 +571,14 @@ func StartTUI() error {
 	sp.Style = lipgloss.NewStyle().Foreground(fuchsia)
 
 	m := model{
-		config:       cfg,
-		spinner:      sp,
-		isRefreshing: true,
-		refreshMsg:   "Loading DDEV projects...",
-		lastErrors:   make(map[string]string),
+		config:             cfg,
+		spinner:            sp,
+		isRefreshing:       true,
+		refreshMsg:         "Loading DDEV projects...",
+		lastErrors:         make(map[string]string),
+		descriptions:       make(map[string]ddev.DescribeRaw),
+		latestLogs:         make(map[string]string),
+		accumulatedLogs:    make(map[string][]string),
 	}
 
 	d := itemDelegate{spinner: sp}

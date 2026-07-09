@@ -1,6 +1,7 @@
 package ddev
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -20,6 +21,30 @@ type ListOutput struct {
 	Raw []Project `json:"raw"`
 }
 
+type ServiceInfo struct {
+	Status string `json:"status"`
+}
+
+type DescribeRaw struct {
+	Name            string                 `json:"name"`
+	Status          string                 `json:"status"`
+	PhpVersion      string                 `json:"php_version"`
+	WebserverType   string                 `json:"webserver_type"`
+	DatabaseType    string                 `json:"database_type"`
+	DatabaseVersion string                 `json:"database_version"`
+	MutagenEnabled  bool                   `json:"mutagen_enabled"`
+	Services        map[string]ServiceInfo `json:"services"`
+}
+
+type DescribeOutput struct {
+	Raw DescribeRaw `json:"raw"`
+}
+
+type CommandStream struct {
+	Reader *bufio.Reader
+	Cmd    *exec.Cmd
+}
+
 func GetProjects() ([]Project, error) {
 	cmd := exec.Command("ddev", "list", "-j")
 	output, err := cmd.Output()
@@ -33,6 +58,22 @@ func GetProjects() ([]Project, error) {
 	}
 
 	return listOutput.Raw, nil
+}
+
+func DescribeProject(appRoot string) (DescribeRaw, error) {
+	cmd := exec.Command("ddev", "describe", "-j")
+	cmd.Dir = appRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return DescribeRaw{}, fmt.Errorf("failed to run ddev describe: %w", err)
+	}
+
+	var desc DescribeOutput
+	if err := json.Unmarshal(output, &desc); err != nil {
+		return DescribeRaw{}, fmt.Errorf("failed to parse ddev describe output: %w", err)
+	}
+
+	return desc.Raw, nil
 }
 
 func StartProject(appRoot string) error {
@@ -61,6 +102,26 @@ func StopProject(appRoot string) error {
 		return fmt.Errorf("failed to stop: %s", outStr)
 	}
 	return nil
+}
+
+func StartCommandStream(appRoot string, action string) (*CommandStream, error) {
+	cmd := exec.Command("ddev", action)
+	cmd.Dir = appRoot
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stderr = cmd.Stdout // Merge stderr into stdout
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	return &CommandStream{
+		Reader: bufio.NewReader(stdout),
+		Cmd:    cmd,
+	}, nil
 }
 
 func Poweroff() error {
