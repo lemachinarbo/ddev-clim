@@ -144,8 +144,9 @@ type model struct {
 	refreshMsg     string
 	err            error
 	lastErrors     map[string]string
-	terminalWidth  int
-	terminalHeight int
+	terminalWidth      int
+	terminalHeight     int
+	showPoweroffPrompt bool
 }
 
 func (m model) Init() tea.Cmd {
@@ -158,6 +159,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
+		
+		if m.showPoweroffPrompt {
+			if msg.String() == "y" || msg.String() == "Y" {
+				m.showPoweroffPrompt = false
+				m.isRefreshing = true
+				m.refreshMsg = "Powering off DDEV..."
+				return m, func() tea.Msg {
+					err := ddev.Poweroff()
+					return statusMsg{index: -1, err: err}
+				}
+			}
+			if msg.String() == "n" || msg.String() == "N" || msg.String() == "esc" {
+				m.showPoweroffPrompt = false
+				return m, nil
+			}
+			return m, nil // Block other keys while prompt is active
+		}
+
 		if m.list.FilterState() != list.Filtering {
 			if msg.String() == "enter" || msg.String() == " " {
 				idx := m.list.Index()
@@ -201,6 +220,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					name := i.project.Name
 					if msg.err != nil {
 						m.lastErrors[name] = msg.err.Error()
+						// Recommend poweroff if a project action fails
+						m.showPoweroffPrompt = true
 					} else {
 						delete(m.lastErrors, name)
 						// Update config only on successful start/stop
@@ -309,41 +330,50 @@ func (m model) View() string {
 	
 	// Centralized Details Panel
 	var details string
-	idx := m.list.Index()
-	items := m.list.Items()
-	if idx >= 0 && idx < len(items) {
-		if i, ok := items[idx].(item); ok {
-			p := i.project
-			
-			borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-			boldLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
-			
-			details = "\n" + borderStyle.Render("── SELECTED PROJECT DETAILS ──────────────────────────────────────────") + "\n"
-			details += fmt.Sprintf("%s %-12s %s %-10s %s %s\n", 
-				boldLabel.Render("Name:"), p.Name,
-				boldLabel.Render("Type:"), p.Type,
-				boldLabel.Render("Path:"), p.AppRoot,
-			)
-			
-			// Show errors or status info
-			lastError := m.lastErrors[p.Name]
-			if lastError != "" {
-				errLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("❌ Error:")
-				formattedErr := formatError(lastError, 3)
-				errLines := strings.Split(formattedErr, "\n")
-				details += fmt.Sprintf("%s %s\n", errLabel, errLines[0])
-				for _, line := range errLines[1:] {
-					details += fmt.Sprintf("         %s\n", line)
+	if m.showPoweroffPrompt {
+		borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
+		boldLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("208"))
+		
+		details = "\n" + borderStyle.Render("── RECOMMENDATION ────────────────────────────────────────────────────") + "\n"
+		details += fmt.Sprintf("%s DDEV action failed. We recommend running poweroff to reset container networking.\n", boldLabel.Render("⚠️ Recommendation:"))
+		details += lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Render("   Power off DDEV globally now? (y/n) ")
+	} else {
+		idx := m.list.Index()
+		items := m.list.Items()
+		if idx >= 0 && idx < len(items) {
+			if i, ok := items[idx].(item); ok {
+				p := i.project
+				
+				borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+				boldLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+				
+				details = "\n" + borderStyle.Render("── SELECTED PROJECT DETAILS ──────────────────────────────────────────") + "\n"
+				details += fmt.Sprintf("%s %-12s %s %-10s %s %s\n", 
+					boldLabel.Render("Name:"), p.Name,
+					boldLabel.Render("Type:"), p.Type,
+					boldLabel.Render("Path:"), p.AppRoot,
+				)
+				
+				// Show errors or status info
+				lastError := m.lastErrors[p.Name]
+				if lastError != "" {
+					errLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("❌ Error:")
+					formattedErr := formatError(lastError, 3)
+					errLines := strings.Split(formattedErr, "\n")
+					details += fmt.Sprintf("%s %s\n", errLabel, errLines[0])
+					for _, line := range errLines[1:] {
+						details += fmt.Sprintf("         %s\n", line)
+					}
+				} else if p.Status == "unhealthy" {
+					tipLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("⚠️ Unhealthy:")
+					details += fmt.Sprintf("%s Project is unhealthy. Try toggling it to stop/restart, or press 'p' to poweroff DDEV globally.\n", tipLabel)
+				} else if p.Status == "running" || p.Status == "OK" {
+					okLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true).Render("✓ Running:")
+					details += fmt.Sprintf("%s at %s\n", okLabel, p.PrimaryURL)
+				} else {
+					stoppedLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true).Render("○ Stopped:")
+					details += fmt.Sprintf("%s Project is stopped. Toggle (enter/space) to start it.\n", stoppedLabel)
 				}
-			} else if p.Status == "unhealthy" {
-				tipLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("⚠️ Unhealthy:")
-				details += fmt.Sprintf("%s Project is unhealthy. Try toggling it to stop/restart, or press 'p' to poweroff DDEV globally.\n", tipLabel)
-			} else if p.Status == "running" || p.Status == "OK" {
-				okLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true).Render("✓ Running:")
-				details += fmt.Sprintf("%s at %s\n", okLabel, p.PrimaryURL)
-			} else {
-				stoppedLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true).Render("○ Stopped:")
-				details += fmt.Sprintf("%s Project is stopped. Toggle (enter/space) to start it.\n", stoppedLabel)
 			}
 		}
 	}
