@@ -8,7 +8,6 @@ import (
 	"ddev-clim/config"
 	"ddev-clim/ddev"
 
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -36,6 +35,7 @@ type item struct {
 	project    ddev.Project
 	processing bool
 	spinner    string // Current spinner frame
+	lastError  string
 }
 
 func (i item) Title() string       { return i.project.Name }
@@ -85,6 +85,8 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			action = "stopping..."
 		}
 		statusStr = statusWorking.Render(i.spinner + " " + action)
+	} else if i.lastError != "" {
+		statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("failed")
 	} else if status == "running" || status == "OK" {
 		statusStr = statusRunning.Render(status)
 	} else if status == "unhealthy" {
@@ -101,6 +103,8 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		} else {
 			rawStatus = "starting..."
 		}
+	} else if i.lastError != "" {
+		rawStatus = "failed"
 	}
 	padding := statusWidth - runewidth.StringWidth(rawStatus)
 	if padding < 0 {
@@ -231,7 +235,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		items := []list.Item{}
 		for _, p := range msg.projects {
-			items = append(items, item{project: p})
+			errStr := m.lastErrors[p.Name]
+			items = append(items, item{project: p, lastError: errStr})
 		}
 		m.list.SetItems(items)
 		m = m.updateListSize()
@@ -351,6 +356,21 @@ func (m model) View() string {
 		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("Global Error: %v", m.err))
 	}
 	
+	// Lock shortcuts to the bottom of the terminal
+	shortcuts := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(
+		"  ↑/k: up/down • /: filter • enter/space: toggle • p: poweroff • q: quit",
+	)
+	
+	if m.terminalHeight > 0 {
+		lines := strings.Split(s, "\n")
+		currentLines := len(lines)
+		targetLines := m.terminalHeight - 2
+		if currentLines < targetLines {
+			s += strings.Repeat("\n", targetLines - currentLines)
+		}
+	}
+	s += "\n" + shortcuts
+	
 	return s
 }
 
@@ -393,19 +413,8 @@ func StartTUI() error {
 	d := itemDelegate{spinner: sp}
 
 	l := list.New([]list.Item{}, d, 0, 0)
+	l.SetShowHelp(false)
 	l.Styles.Title = lipgloss.NewStyle() // Unset default title styling
-	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{
-			key.NewBinding(
-				key.WithKeys("enter", " "),
-				key.WithHelp("enter/space", "toggle"),
-			),
-			key.NewBinding(
-				key.WithKeys("p"),
-				key.WithHelp("p", "poweroff"),
-			),
-		}
-	}
 	
 	instr := "\n" + instructionStyle.Render("Navigate the instances, toggle with enter/space, or poweroff with p")
 	
