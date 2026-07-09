@@ -297,13 +297,18 @@ func (m model) View() string {
 			lastError := m.lastErrors[p.Name]
 			if lastError != "" {
 				errLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("❌ Error:")
-				details += fmt.Sprintf("%s %s\n", errLabel, lastError)
+				formattedErr := formatError(lastError, 3)
+				errLines := strings.Split(formattedErr, "\n")
+				details += fmt.Sprintf("%s %s\n", errLabel, errLines[0])
+				for _, line := range errLines[1:] {
+					details += fmt.Sprintf("         %s\n", line)
+				}
 			} else if p.Status == "unhealthy" {
 				tipLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("⚠️ Unhealthy:")
 				details += fmt.Sprintf("%s Project is unhealthy. Try toggling it to stop/restart, or press 'p' to poweroff DDEV globally.\n", tipLabel)
 			} else if p.Status == "running" || p.Status == "OK" {
 				okLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true).Render("✓ Running:")
-				details += fmt.Sprintf("%s Project is running correctly at %s\n", okLabel, p.PrimaryURL)
+				details += fmt.Sprintf("%s at %s\n", okLabel, p.PrimaryURL)
 			} else {
 				stoppedLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true).Render("○ Stopped:")
 				details += fmt.Sprintf("%s Project is stopped. Toggle (enter/space) to start it.\n", stoppedLabel)
@@ -320,6 +325,24 @@ func (m model) View() string {
 	}
 	
 	return s
+}
+
+func formatError(errStr string, maxLines int) string {
+	lines := strings.Split(errStr, "\n")
+	var nonEnvLines []string
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" {
+			nonEnvLines = append(nonEnvLines, l)
+		}
+	}
+	
+	if len(nonEnvLines) <= maxLines {
+		return strings.Join(nonEnvLines, "\n")
+	}
+	
+	// Get the last maxLines
+	return "... (truncated) ...\n" + strings.Join(nonEnvLines[len(nonEnvLines)-maxLines:], "\n")
 }
 
 func StartTUI() error {
