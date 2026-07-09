@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"ddev-clim/config"
 	"ddev-clim/ddev"
@@ -43,6 +44,13 @@ func (i item) Title() string       { return i.project.Name }
 func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return i.project.Name }
 
+// globalItem is the synthetic "DDEV Global" row always at position 0.
+type globalItem struct{}
+
+func (g globalItem) Title() string       { return "ddev" }
+func (g globalItem) Description() string { return "" }
+func (g globalItem) FilterValue() string { return "ddev" }
+
 type itemDelegate struct {
 	spinner spinner.Model
 }
@@ -51,29 +59,64 @@ func (d itemDelegate) Height() int                               { return 1 }
 func (d itemDelegate) Spacing() int                              { return 0 }
 func (d itemDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
 func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	// Column widths (shared)
+	nameWidth := 30
+	statusWidth := 15
+
+	// ── Global row ───────────────────────────────────────────────────────────
+	if _, ok := listItem.(globalItem); ok {
+		dimmed := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		selected := index == m.Index()
+
+		nameStr := runewidth.FillRight("ddev", nameWidth)
+		var nameRendered string
+		if selected {
+			nameRendered = lipgloss.NewStyle().Foreground(fuchsia).Render(nameStr)
+		} else {
+			nameRendered = dimmed.Render(nameStr)
+		}
+
+		// Count running projects from the list
+		running := 0
+		for _, li := range m.Items() {
+			if proj, ok := li.(item); ok {
+				if proj.project.Status == "running" || proj.project.Status == "OK" {
+					running++
+				}
+			}
+		}
+		var statusRendered string
+		if running > 0 {
+			statusRendered = dimmed.Render(fmt.Sprintf("%d running", running))
+		} else {
+			statusRendered = dimmed.Render("idle")
+		}
+
+		prefix := "  "
+		if selected {
+			prefix = lipgloss.NewStyle().Foreground(fuchsia).Render("> ")
+		}
+		fmt.Fprintf(w, "%s%s%s", prefix, nameRendered, statusRendered)
+		return
+	}
+
+	// ── Project row ──────────────────────────────────────────────────────────
 	i, ok := listItem.(item)
 	if !ok {
 		return
 	}
 
 	str := ""
-	
-	// Column widths
-	nameWidth := 30
-	statusWidth := 15
 
 	// Name
 	name := i.project.Name
 	if runewidth.StringWidth(name) > nameWidth-2 {
 		name = runewidth.Truncate(name, nameWidth-5, "...")
 	}
-	
-	// Default foreground for normal titles (adapts to light/dark automatically)
 	nameStyle := lipgloss.NewStyle().Bold(true)
 	if index == m.Index() {
 		nameStyle = nameStyle.Foreground(fuchsia)
 	}
-	
 	nameStr := runewidth.FillRight(name, nameWidth)
 	str += nameStyle.Render(nameStr)
 
@@ -85,13 +128,6 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		if status == "running" || status == "OK" || status == "unhealthy" {
 			action = "stopping..."
 		}
-		if i.latestLog != "" {
-			action = i.latestLog
-		}
-		// Truncate action if it's too long for the status column
-		if runewidth.StringWidth(action) > statusWidth-4 {
-			action = runewidth.Truncate(action, statusWidth-7, "...")
-		}
 		statusStr = statusWorking.Render(i.spinner + " " + action)
 	} else if i.lastError != "" {
 		statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("failed")
@@ -102,16 +138,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	} else {
 		statusStr = statusStopped.Render(status)
 	}
-	
+
 	// Manual padding for status
 	rawStatus := status
 	if i.processing {
-		if i.latestLog != "" {
-			rawStatus = i.latestLog
-			if runewidth.StringWidth(rawStatus) > statusWidth-4 {
-				rawStatus = runewidth.Truncate(rawStatus, statusWidth-7, "...")
-			}
-		} else if status == "running" || status == "OK" || status == "unhealthy" {
+		if status == "running" || status == "OK" || status == "unhealthy" {
 			rawStatus = "stopping..."
 		} else {
 			rawStatus = "starting..."
@@ -126,10 +157,9 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	str += statusStr + strings.Repeat(" ", padding)
 
 	// URL
-	url := i.project.PrimaryURL
-	str += url
+	str += i.project.PrimaryURL
 
-	// Selection indicator (left border replacement)
+	// Selection indicator
 	if index == m.Index() {
 		prefix := lipgloss.NewStyle().Foreground(fuchsia).Render("> ")
 		fmt.Fprintf(w, "%s%s", prefix, str)
@@ -139,8 +169,9 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 }
 
 type statusMsg struct {
-	index int
-	err   error
+	index      int
+	isStopping bool
+	err        error
 }
 
 type refreshMsg struct {
@@ -152,6 +183,11 @@ type describeMsg struct {
 	projectName string
 	raw         ddev.DescribeRaw
 	err         error
+}
+
+type pollDescribeMsg struct {
+	projectName string
+	appRoot     string
 }
 
 type streamLineMsg struct {
@@ -181,6 +217,8 @@ type model struct {
 	descriptions       map[string]ddev.DescribeRaw
 	latestLogs         map[string]string
 	accumulatedLogs    map[string][]string
+	isPoweringOff      bool
+	poweroffLogs       []string
 }
 
 func (m model) Init() tea.Cmd {
@@ -197,12 +235,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showPoweroffPrompt {
 			if msg.String() == "y" || msg.String() == "Y" {
 				m.showPoweroffPrompt = false
-				m.isRefreshing = true
-				m.refreshMsg = "Powering off DDEV..."
-				return m, func() tea.Msg {
-					err := ddev.Poweroff()
-					return statusMsg{index: -1, err: err}
+				stream, err := ddev.StartCommandStream(".", "poweroff")
+				if err != nil {
+					m.err = err
+					return m, nil
 				}
+				m.isPoweringOff = true
+				m.poweroffLogs = []string{"Initiating poweroff..."}
+				// Jump cursor to the global row (always index 0)
+				m.list.Select(0)
+				return m, readStreamLineCmd("GLOBAL_POWEROFF", false, stream)
 			}
 			if msg.String() == "n" || msg.String() == "N" || msg.String() == "esc" {
 				m.showPoweroffPrompt = false
@@ -226,13 +268,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.list.SetItem(idx, i)
 
 					isStopping := i.project.Status == "running" || i.project.Status == "OK" || i.project.Status == "unhealthy"
-					action := "start"
 					if isStopping {
-						action = "stop"
 						i.latestLog = "stopping..."
 						m.list.SetItem(idx, i)
 					}
 
+					action := "start"
+					if isStopping {
+						action = "stop"
+					}
 					stream, err := ddev.StartCommandStream(i.project.AppRoot, action)
 					if err != nil {
 						i.processing = false
@@ -244,16 +288,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.latestLogs[i.project.Name] = i.latestLog
 					m.accumulatedLogs[i.project.Name] = []string{i.latestLog}
 
-					return m, readStreamLineCmd(i.project.Name, isStopping, stream)
+					return m, tea.Batch(
+						readStreamLineCmd(i.project.Name, isStopping, stream),
+						m.pollDescribeCmd(i.project.Name, i.project.AppRoot),
+					)
 				}
 			}
 			if msg.String() == "p" {
-				m.isRefreshing = true
-				m.refreshMsg = "Powering off DDEV..."
-				return m, func() tea.Msg {
-					err := ddev.Poweroff()
-					return statusMsg{index: -1, err: err}
+				stream, err := ddev.StartCommandStream(".", "poweroff")
+				if err != nil {
+					m.err = err
+					return m, nil
 				}
+				m.isPoweringOff = true
+				m.poweroffLogs = []string{"Initiating poweroff..."}
+				// Jump cursor to the global row (always index 0)
+				m.list.Select(0)
+				return m, readStreamLineCmd("GLOBAL_POWEROFF", false, stream)
 			}
 		}
 	case statusMsg:
@@ -269,13 +320,108 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshMsg = "Loading DDEV projects..."
 		return m, m.refreshCmd()
 
+	case streamLineMsg:
+		if msg.projectName == "GLOBAL_POWEROFF" {
+			m.poweroffLogs = append(m.poweroffLogs, msg.line)
+			return m, readStreamLineCmd(msg.projectName, msg.isStopping, msg.stream)
+		}
+
+		m.latestLogs[msg.projectName] = msg.line
+		m.accumulatedLogs[msg.projectName] = append(m.accumulatedLogs[msg.projectName], msg.line)
+		
+		idx := -1
+		items := m.list.Items()
+		for i, listItem := range items {
+			if item, ok := listItem.(item); ok && item.project.Name == msg.projectName {
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 {
+			if item, ok := items[idx].(item); ok {
+				item.spinner = m.spinner.View()
+				item.latestLog = msg.line
+				m.list.SetItem(idx, item)
+			}
+		}
+		return m, readStreamLineCmd(msg.projectName, msg.isStopping, msg.stream)
+
+	case streamFinishedMsg:
+		if msg.projectName == "GLOBAL_POWEROFF" {
+			m.isPoweringOff = false
+			m.poweroffLogs = nil
+			if msg.err != nil {
+				m.err = msg.err
+			} else {
+				m.err = nil
+				m.lastErrors = make(map[string]string)
+				m.config.RunningProjects = []string{}
+				_ = config.SaveConfig(m.config)
+			}
+			m.refreshMsg = "Loading DDEV projects..."
+			return m, m.refreshCmd()
+		}
+
+		idx := -1
+		items := m.list.Items()
+		for i, listItem := range items {
+			if item, ok := listItem.(item); ok && item.project.Name == msg.projectName {
+				idx = i
+				break
+			}
+		}
+		
+		if idx >= 0 {
+			if item, ok := items[idx].(item); ok {
+				item.processing = false
+				item.latestLog = ""
+				m.list.SetItem(idx, item)
+			}
+		}
+		
+		if msg.err != nil {
+			m.lastErrors[msg.projectName] = strings.Join(m.accumulatedLogs[msg.projectName], "\n")
+			m.showPoweroffPrompt = true
+		} else {
+			delete(m.lastErrors, msg.projectName)
+			if msg.isStopping {
+				m.config.RemoveProject(msg.projectName)
+			} else {
+				m.config.AddProject(msg.projectName)
+			}
+			_ = config.SaveConfig(m.config)
+		}
+		
+		delete(m.latestLogs, msg.projectName)
+		delete(m.accumulatedLogs, msg.projectName)
+		
+		return m, m.refreshCmd()
+
+	case pollDescribeMsg:
+		items := m.list.Items()
+		stillProcessing := false
+		for _, listItem := range items {
+			if item, ok := listItem.(item); ok && item.project.Name == msg.projectName && item.processing {
+				stillProcessing = true
+				break
+			}
+		}
+		if stillProcessing {
+			return m, tea.Batch(
+				m.describeCmd(msg.projectName, msg.appRoot),
+				m.pollDescribeCmd(msg.projectName, msg.appRoot),
+			)
+		}
+		return m, nil
+
 	case refreshMsg:
 		m.isRefreshing = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
-		items := []list.Item{}
+		// Always prepend the global row
+		items := []list.Item{globalItem{}}
 		for _, p := range msg.projects {
 			errStr := m.lastErrors[p.Name]
 			items = append(items, item{project: p, lastError: errStr})
@@ -283,9 +429,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetItems(items)
 		m = m.updateListSize()
 		
-		// Query describe for currently selected item after refresh!
+		// Query describe for currently selected project (skip global row at 0)
 		idx := m.list.Index()
-		if idx >= 0 && idx < len(items) {
+		if idx > 0 && idx < len(items) {
 			if i, ok := items[idx].(item); ok {
 				return m, m.describeCmd(i.project.Name, i.project.AppRoot)
 			}
@@ -318,7 +464,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.list, cmd = m.list.Update(msg)
 	
 	newIndex := m.list.Index()
-	if oldIndex != newIndex && newIndex >= 0 {
+	if oldIndex != newIndex && newIndex > 0 {
 		items := m.list.Items()
 		if newIndex < len(items) {
 			if i, ok := items[newIndex].(item); ok {
@@ -358,27 +504,24 @@ func (m model) describeCmd(name string, appRoot string) tea.Cmd {
 	}
 }
 
+func (m model) pollDescribeCmd(name string, appRoot string) tea.Cmd {
+	return tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
+		return pollDescribeMsg{projectName: name, appRoot: appRoot}
+	})
+}
+
 func readStreamLineCmd(name string, isStopping bool, stream *ddev.CommandStream) tea.Cmd {
 	return func() tea.Msg {
 		buf := make([]byte, 1024)
 		n, err := stream.Reader.Read(buf)
 		if err != nil {
-			stream.Mu.Lock()
-			done := stream.Done
-			waitErr := stream.Err
-			stream.Mu.Unlock()
-			
-			if done {
-				return streamFinishedMsg{
-					projectName: name,
-					isStopping:  isStopping,
-					err:         waitErr,
-				}
-			}
+			exitErr := <-stream.WaitCh
+			// Put it back in the channel in case other reads also hit EOF
+			stream.WaitCh <- exitErr
 			return streamFinishedMsg{
 				projectName: name,
 				isStopping:  isStopping,
-				err:         err,
+				err:         exitErr,
 			}
 		}
 		
@@ -405,6 +548,8 @@ func readStreamLineCmd(name string, isStopping bool, stream *ddev.CommandStream)
 	}
 }
 
+
+
 func (m model) refreshCmd() tea.Cmd {
 	return func() tea.Msg {
 		projects, err := ddev.GetProjects()
@@ -430,12 +575,35 @@ func (m model) View() string {
 		boldLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("208"))
 		
 		details = "\n" + borderStyle.Render("── RECOMMENDATION ────────────────────────────────────────────────────") + "\n"
-		details += fmt.Sprintf("%s DDEV action failed. We recommend running poweroff to reset container networking.\n", boldLabel.Render("⚠️ Recommendation:"))
+		details += fmt.Sprintf("%s DDEV action failed. We recommend running poweroff to reset container networking.\n", boldLabel.Render("Recommendation:"))
 		details += lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Render("   Power off DDEV globally now? (y/n) ")
 	} else {
 		idx := m.list.Index()
 		items := m.list.Items()
-		if idx >= 0 && idx < len(items) {
+		if idx == 0 {
+			// Global row selected
+			borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+			boldLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5"))
+			details = "\n" + borderStyle.Render("── DDEV GLOBAL STATUS ────────────────────────────────────────────────") + "\n"
+			if m.isPoweringOff {
+				details += fmt.Sprintf("%s Powering off DDEV globally...\n", m.spinner.View())
+				logs := m.poweroffLogs
+				start := len(logs) - 3
+				if start < 0 {
+					start = 0
+				}
+				if len(logs) > 0 {
+					rule := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("-", 40))
+					details += fmt.Sprintf("%s\n%s\n", boldLabel.Render("Progress:"), rule)
+					for i := start; i < len(logs); i++ {
+						details += fmt.Sprintf("%s\n", logs[i])
+					}
+				}
+			} else {
+				dimmed := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+				details += dimmed.Render("  Press p to power off all DDEV projects and router globally.") + "\n"
+			}
+		} else if idx > 0 && idx < len(items) {
 			if i, ok := items[idx].(item); ok {
 				p := i.project
 				
@@ -445,7 +613,7 @@ func (m model) View() string {
 				details = "\n" + borderStyle.Render("── PROJECT STATUS CENTER ─────────────────────────────────────────────") + "\n"
 				
 				desc, hasDesc := m.descriptions[p.Name]
-				if hasDesc && p.Status != "stopped" {
+				if hasDesc && (p.Status != "stopped" || i.processing) {
 					typeStr := p.Type
 					if desc.WebserverType != "" {
 						typeStr = fmt.Sprintf("%s (%s)", p.Type, desc.WebserverType)
@@ -510,33 +678,40 @@ func (m model) View() string {
 					)
 				}
 				
-				details += fmt.Sprintf("%s  %-40s %s %s\n", 
+				details += fmt.Sprintf("%s  %s\n",
 					boldLabel.Render("URL:"), p.PrimaryURL,
-					boldLabel.Render("Path:"), p.AppRoot,
 				)
 				
 				lastError := m.lastErrors[p.Name]
-				latestLog := m.latestLogs[p.Name]
+				logs := m.accumulatedLogs[p.Name]
 				
 				if lastError != "" {
-					errLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("❌ Error:")
+					errLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("Error:")
 					formattedErr := formatError(lastError, 3)
 					errLines := strings.Split(formattedErr, "\n")
 					details += fmt.Sprintf("%s %s\n", errLabel, errLines[0])
 					for _, line := range errLines[1:] {
 						details += fmt.Sprintf("         %s\n", line)
 					}
-				} else if latestLog != "" {
-					progressLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true).Render("⏳ Progress:")
-					details += fmt.Sprintf("%s %s\n", progressLabel, latestLog)
+				} else if len(logs) > 0 {
+					progressLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true).Render("Progress:")
+					rule := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("-", 40))
+					details += fmt.Sprintf("%s\n%s\n", progressLabel, rule)
+					start := len(logs) - 3
+					if start < 0 {
+						start = 0
+					}
+					for idx := start; idx < len(logs); idx++ {
+						details += fmt.Sprintf("%s\n", logs[idx])
+					}
 				} else if p.Status == "unhealthy" {
-					tipLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("⚠️ Unhealthy:")
+					tipLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("Unhealthy:")
 					details += fmt.Sprintf("%s Project is unhealthy. Try toggling it to stop/restart, or press 'p' to poweroff DDEV globally.\n", tipLabel)
 				} else if p.Status == "running" || p.Status == "OK" {
-					okLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true).Render("✓ Running:")
+					okLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true).Render("Running:")
 					details += fmt.Sprintf("%s at %s\n", okLabel, p.PrimaryURL)
 				} else {
-					stoppedLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true).Render("○ Stopped:")
+					stoppedLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true).Render("Stopped:")
 					details += fmt.Sprintf("%s Project is stopped. Toggle (enter/space) to start it.\n", stoppedLabel)
 				}
 			}
@@ -606,6 +781,8 @@ func StartTUI() error {
 		descriptions:       make(map[string]ddev.DescribeRaw),
 		latestLogs:         make(map[string]string),
 		accumulatedLogs:    make(map[string][]string),
+		isPoweringOff:      false,
+		poweroffLogs:       nil,
 	}
 
 	d := itemDelegate{spinner: sp}

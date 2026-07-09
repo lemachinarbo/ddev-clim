@@ -6,7 +6,6 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"sync"
 )
 
 type Project struct {
@@ -44,9 +43,7 @@ type DescribeOutput struct {
 type CommandStream struct {
 	Reader io.Reader
 	Cmd    *exec.Cmd
-	Mu     sync.Mutex
-	Err    error
-	Done   bool
+	WaitCh chan error
 }
 
 func GetProjects() ([]Project, error) {
@@ -122,21 +119,22 @@ func StartCommandStream(appRoot string, action string) (*CommandStream, error) {
 		return nil, err
 	}
 
+	waitCh := make(chan error, 1)
 	stream := &CommandStream{
 		Reader: stdout,
 		Cmd:    cmd,
+		WaitCh: waitCh,
 	}
 
 	go func() {
 		state, waitErr := cmd.Process.Wait()
-		stream.Mu.Lock()
+		var exitErr error
 		if waitErr != nil {
-			stream.Err = waitErr
+			exitErr = waitErr
 		} else if !state.Success() {
-			stream.Err = fmt.Errorf("exit status %d", state.ExitCode())
+			exitErr = fmt.Errorf("exit status %d", state.ExitCode())
 		}
-		stream.Done = true
-		stream.Mu.Unlock()
+		waitCh <- exitErr
 		_ = stdout.Close()
 	}()
 
