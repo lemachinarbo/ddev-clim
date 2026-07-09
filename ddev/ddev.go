@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 type Project struct {
@@ -37,8 +38,13 @@ func GetProjects() ([]Project, error) {
 func StartProject(appRoot string) error {
 	cmd := exec.Command("ddev", "start")
 	cmd.Dir = appRoot
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start ddev in %s: %w", appRoot, err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := strings.TrimSpace(string(output))
+		if outStr == "" {
+			outStr = err.Error()
+		}
+		return fmt.Errorf("failed to start: %s", outStr)
 	}
 	return nil
 }
@@ -46,8 +52,13 @@ func StartProject(appRoot string) error {
 func StopProject(appRoot string) error {
 	cmd := exec.Command("ddev", "stop")
 	cmd.Dir = appRoot
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to stop ddev in %s: %w", appRoot, err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := strings.TrimSpace(string(output))
+		if outStr == "" {
+			outStr = err.Error()
+		}
+		return fmt.Errorf("failed to stop: %s", outStr)
 	}
 	return nil
 }

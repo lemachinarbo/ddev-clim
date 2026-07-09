@@ -128,6 +128,7 @@ type statusMsg struct {
 
 type refreshMsg struct {
 	projects []ddev.Project
+	err      error
 }
 
 type model struct {
@@ -137,6 +138,7 @@ type model struct {
 	isRefreshing bool
 	refreshMsg   string
 	err          error
+	lastErrors   map[string]string
 }
 
 func (m model) Init() tea.Cmd {
@@ -190,16 +192,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case statusMsg:
-		if msg.err != nil {
-			m.err = msg.err
+		if msg.index >= 0 {
+			items := m.list.Items()
+			if msg.index < len(items) {
+				if i, ok := items[msg.index].(item); ok {
+					name := i.project.Name
+					if msg.err != nil {
+						m.lastErrors[name] = msg.err.Error()
+					} else {
+						delete(m.lastErrors, name)
+					}
+				}
+			}
 		} else {
-			m.err = nil
+			if msg.err != nil {
+				m.err = msg.err
+			} else {
+				m.err = nil
+				m.lastErrors = make(map[string]string)
+			}
 		}
 		m.refreshMsg = "Loading DDEV projects..."
 		return m, m.refreshCmd()
 
 	case refreshMsg:
 		m.isRefreshing = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
 		items := []list.Item{}
 		for _, p := range msg.projects {
 			items = append(items, item{project: p})
@@ -224,7 +245,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		h, v := docStyle.GetFrameSize()
-		m.list.SetSize(msg.Width-h, msg.Height-v)
+		listHeight := msg.Height - v - 6
+		if listHeight < 5 {
+			listHeight = 5
+		}
+		m.list.SetSize(msg.Width-h, listHeight)
 	}
 
 	var cmd tea.Cmd
@@ -235,10 +260,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) refreshCmd() tea.Cmd {
 	return func() tea.Msg {
 		projects, err := ddev.GetProjects()
-		if err != nil {
-			return nil
-		}
-		return refreshMsg{projects: projects}
+		return refreshMsg{projects: projects, err: err}
 	}
 }
 
@@ -253,24 +275,48 @@ func (m model) View() string {
 
 	s := docStyle.Render(m.list.View())
 	
-	// Check for unhealthy instances
-	hasUnhealthy := false
-	for _, listItem := range m.list.Items() {
-		if i, ok := listItem.(item); ok && i.project.Status == "unhealthy" {
-			hasUnhealthy = true
-			break
+	// Centralized Details Panel
+	var details string
+	idx := m.list.Index()
+	items := m.list.Items()
+	if idx >= 0 && idx < len(items) {
+		if i, ok := items[idx].(item); ok {
+			p := i.project
+			
+			borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+			boldLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
+			
+			details = "\n" + borderStyle.Render("── SELECTED PROJECT DETAILS ──────────────────────────────────────────") + "\n"
+			details += fmt.Sprintf("%s %-12s %s %-10s %s %s\n", 
+				boldLabel.Render("Name:"), p.Name,
+				boldLabel.Render("Type:"), p.Type,
+				boldLabel.Render("Path:"), p.AppRoot,
+			)
+			
+			// Show errors or status info
+			lastError := m.lastErrors[p.Name]
+			if lastError != "" {
+				errLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("❌ Error:")
+				details += fmt.Sprintf("%s %s\n", errLabel, lastError)
+			} else if p.Status == "unhealthy" {
+				tipLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render("⚠️ Unhealthy:")
+				details += fmt.Sprintf("%s Project is unhealthy. Try toggling it to stop/restart, or press 'p' to poweroff DDEV globally.\n", tipLabel)
+			} else if p.Status == "running" || p.Status == "OK" {
+				okLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true).Render("✓ Running:")
+				details += fmt.Sprintf("%s Project is running correctly at %s\n", okLabel, p.PrimaryURL)
+			} else {
+				stoppedLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true).Render("○ Stopped:")
+				details += fmt.Sprintf("%s Project is stopped. Toggle (enter/space) to start it.\n", stoppedLabel)
+			}
 		}
 	}
 	
-	if hasUnhealthy {
-		warningMsg := "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true).Render(
-			"⚠️ Unhealthy instance(s) detected! Try toggling to stop/restart them, or press 'p' to poweroff DDEV.",
-		)
-		s += warningMsg
+	if details != "" {
+		s += details
 	}
 
 	if m.err != nil {
-		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("Error: %v", m.err))
+		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("Global Error: %v", m.err))
 	}
 	
 	return s
@@ -291,6 +337,7 @@ func StartTUI() error {
 		spinner:      sp,
 		isRefreshing: true,
 		refreshMsg:   "Loading DDEV projects...",
+		lastErrors:   make(map[string]string),
 	}
 
 	d := itemDelegate{spinner: sp}
