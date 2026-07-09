@@ -80,7 +80,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	status := i.project.Status
 	var statusStr string
 	if i.processing {
-		statusStr = statusWorking.Render(i.spinner + " starting...")
+		action := "starting..."
+		if status == "running" || status == "OK" || status == "unhealthy" {
+			action = "stopping..."
+		}
+		statusStr = statusWorking.Render(i.spinner + " " + action)
 	} else if status == "running" || status == "OK" {
 		statusStr = statusRunning.Render(status)
 	} else if status == "unhealthy" {
@@ -92,7 +96,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	// Manual padding for status
 	rawStatus := status
 	if i.processing {
-		rawStatus = "starting..."
+		if status == "running" || status == "OK" || status == "unhealthy" {
+			rawStatus = "stopping..."
+		} else {
+			rawStatus = "starting..."
+		}
 	}
 	padding := statusWidth - runewidth.StringWidth(rawStatus)
 	if padding < 0 {
