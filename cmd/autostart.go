@@ -52,6 +52,8 @@ var autostartCmd = &cobra.Command{
 			}
 
 			fmt.Printf("Starting %s...\n", name)
+			// Run stop first to ensure a clean slate (removes stale containers/sockets)
+			_ = ddev.StopProject(p.AppRoot)
 			if err := ddev.StartProject(p.AppRoot); err != nil {
 				fmt.Printf("Error starting %s: %v\n", name, err)
 			}
