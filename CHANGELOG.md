@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/lemachinarbo/ddev-clim/compare/v0.5.0...v0.5.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* stop projects before starting during autostart ([518b888](https://github.com/lemachinarbo/ddev-clim/commit/518b888b69727d0b3e38c5588ff7237fd219cb20))
+
 ## [0.5.0](https://github.com/lemachinarbo/ddev-clim/compare/v0.4.2...v0.5.0) (2026-07-09)
 
 
